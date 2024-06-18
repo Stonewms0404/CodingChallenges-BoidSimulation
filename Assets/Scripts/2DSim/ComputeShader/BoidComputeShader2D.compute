@@ -1,0 +1,212 @@
+#pragma kernel CalculateBoid
+
+struct Boid2D
+{
+    float x;
+    float y;
+    float vx;
+    float vy;
+};
+
+/*
+    Passed in values
+*/
+RWStructuredBuffer<Boid2D> boids;           //All of the boids
+RWStructuredBuffer<float2> centerOfMass;    //Center of Mass for the boid to move towards
+RWStructuredBuffer<float> distances;        //Calculated Distances
+
+
+/*
+    Constant Values (Can change in editor)
+*/
+
+float simSteps;         //The amount of simulation steps per frame
+float numOfBoids;       //The number of boids
+
+float avoidFactor;      //Factor the boids will avoid each other
+float matchingFactor;   //Factor the boids will attempt to match each other's velocity
+float centeringFactor;  //Factor the boids will try to move towards the center of the flock
+float turnFactor;       //Factor the boids will turn when hitting a wall
+
+int maxSpeed;           //The max speed the boids will ever move
+int minSpeed;           //The min speed the boids will ever move
+
+int sightRange;         //The max sight range of the boid
+int dangerRange;        //The range at which the boid will move away from other boids
+
+float rightMargin;      //The right margin that the boid is not allowed to touch
+float leftMargin;       //The left margin that the boid is not allowed to touch
+float topMargin;        //The top margin that the boid is not allowed to touch
+float bottomMargin;     //The bottom margin that the boid is not allowed to touch
+
+//If the boid hits a margin, it will start to turn away
+Boid2D WallAlignment(Boid2D boid)
+{
+    if (boid.x < leftMargin)
+        boid.vx = boid.vx + turnFactor;
+    
+    if (boid.x > rightMargin)
+        boid.vx = boid.vx - turnFactor;
+
+    if (boid.y < bottomMargin)
+        boid.vy = boid.vy + turnFactor;
+
+    if (boid.y > topMargin)
+        boid.vy = boid.vy - turnFactor;
+    
+    return boid;
+}
+
+//The boid will attempt to push away from another boid if it is too close
+Boid2D Seperation(Boid2D boid, int index)
+{
+    float close_dx = 0;
+    float close_dy = 0;
+
+    for (int i = 0; i < numOfBoids; i++)
+    {
+        if (index == i)
+            continue;
+
+        Boid2D boidB = boids[i];
+        float2 posA = float2(boid.x, boid.y);
+        float2 posB = float2(boidB.x, boidB.y);
+        float distance = distances[i];
+
+        if (distance < dangerRange)
+        {
+            close_dx += boid.x - boidB.x;
+            close_dy += boid.y - boidB.y;
+        }
+    }
+
+    boid.vx += close_dx * avoidFactor;
+    boid.vy += close_dy * avoidFactor;
+    
+    return boid;
+}
+
+Boid2D Alignment(Boid2D boid, int index)
+{
+    float xvel_avg = 0;
+    float yvel_avg = 0;
+    uint neighboring_boids = 0;
+
+    for (int i = 0; i < numOfBoids; i++)
+    {
+        if (i == index)
+            continue;
+
+        float distance = distances[i];
+        if ((distance > dangerRange) && (distance < sightRange))
+        {
+            xvel_avg += boids[i].vx;
+            yvel_avg += boids[i].vy;
+            neighboring_boids++;
+        }
+    }
+
+    if (neighboring_boids > 0)
+    {
+        xvel_avg /= neighboring_boids;
+        yvel_avg /= neighboring_boids;
+        boid.vx += (xvel_avg - boid.vx) * matchingFactor;
+        boid.vy += (yvel_avg - boid.vy) * matchingFactor;
+    }
+    
+    return boid;
+}
+
+Boid2D Cohesion(Boid2D boid, int index)
+{
+    float xpos_avg = 0;
+    float ypos_avg = 0;
+    uint neighboring_boids = 0;
+
+    for (int i = 0; i < numOfBoids; i++)
+    {
+        if (i == index)
+            continue;
+
+        float distance = distances[i];
+        if ((distance > dangerRange) && (distance < sightRange))
+        {
+            xpos_avg += boids[i].x;
+            ypos_avg += boids[i].y;
+            neighboring_boids++;
+        }
+    }
+
+    if (neighboring_boids > 0)
+    {
+        xpos_avg /= neighboring_boids;
+        ypos_avg /= neighboring_boids;
+        centerOfMass[index] = float2(xpos_avg, ypos_avg);
+
+        boid.vx += (xpos_avg - boid.x) * centeringFactor;
+        boid.vy += (ypos_avg - boid.y) * centeringFactor;
+    }
+    
+    return boid;
+}
+
+//The speed check of the boid. Will not go below a minSpeed and not above maxSpeed
+Boid2D CheckSpeed(Boid2D boid)
+{
+    float2 vel = float2(boid.vx, boid.vy);
+
+    float speed = sqrt(vel.x * vel.x + vel.y * vel.y);
+
+    if (speed < minSpeed)
+    {
+        boid.vx = (vel.x / speed) * minSpeed;
+        boid.vy = (vel.y / speed) * minSpeed;
+    }
+    else if (speed > maxSpeed)
+    {
+        boid.vx = (vel.x / speed) * maxSpeed;
+        boid.vy = (vel.y / speed) * maxSpeed;
+    }
+    
+    return boid;
+}
+
+//Updates the final positions of the boid
+Boid2D UpdatePositions(Boid2D boid, int index, float deltaTime)
+{
+    boid.x += boid.vx * deltaTime;
+    boid.y += boid.vy * deltaTime;
+    
+    return boid;
+}
+
+void CalculateDistance(Boid2D boid)
+{
+    float2 pointA = float2(boid.x, boid.y);
+    
+    for (int i = 0; i < numOfBoids; i++)
+    {
+        float2 pointB = float2(boids[i].x, boids[i].y);
+        float dist = distance(pointA, pointB);
+        
+        distances[i] = dist;
+    }
+}
+
+
+[numthreads(1024,1,1)]
+void CalculateBoid (uint3 id : SV_DispatchThreadID)
+{
+    Boid2D boid = boids[id.x];
+    
+    CalculateDistance(boid);
+    
+    boid = WallAlignment(boid);
+    boid = Seperation(boid, id.x);
+    boid = Alignment(boid, id.x);
+    boid = Cohesion(boid, id.x);
+    boid = CheckSpeed(boid);
+    boid = UpdatePositions(boid, id.x, 1 / simSteps);
+    
+    boids[id.x] = boid;
+}

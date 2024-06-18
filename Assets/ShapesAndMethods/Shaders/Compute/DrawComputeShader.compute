@@ -1,0 +1,36 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel DrawPetals
+
+RWStructuredBuffer<float3> pointPos;
+float posX, posY, petalCount, amplitude;
+int petalPoints;
+
+float lerp(float a, float b, float t)
+{
+    return (1 - t) * a + t * b;
+}
+void Petals(uint index)
+{
+    float progress = (float) index / (petalPoints - 1);
+    float theta = lerp(0, (2 * 3.14159265), progress);
+    float r = sin(petalCount * theta) * amplitude;
+    float x = r * cos(theta);
+    float y = r * sin(theta);
+   
+    float3 pos;
+    pos.x = x + posX;
+    pos.y = y + posY;
+    pos.z = 0;
+        
+    pointPos[index] = pos;
+}
+
+[numthreads(64, 1, 1)]
+void DrawPetals(uint id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index < petalPoints)
+    {
+        Petals(index);
+    }
+}
